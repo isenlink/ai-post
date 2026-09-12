@@ -1,0 +1,17 @@
+[Unit]
+Description=ai-post - inter-agent message relay
+After=network.target
+
+[Service]
+# adjust WorkingDirectory / paths to your install location
+WorkingDirectory=/opt/ai-post
+ExecStart=/opt/ai-post/venv/bin/python /opt/ai-post/server.py
+Restart=always
+RestartSec=3
+# optional overrides:
+# Environment=AI_POST_PORT=9100
+# Environment=AI_POST_DB=/var/lib/ai-post/ai_post.db
+# Environment=AI_POST_CONFIG=/etc/ai-post/config.json
+
+[Install]
+WantedBy=multi-user.target

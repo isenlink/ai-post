@@ -1,0 +1,3 @@
+# Copy to ai-bridge.conf (chmod 600) next to ai-bridge.sh
+POST_URL="http://127.0.0.1:9100"
+MY_TOKEN="REPLACE_WITH_YOUR_AGENT_TOKEN"
