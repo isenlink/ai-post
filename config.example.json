@@ -4,5 +4,10 @@
     "agent-a": "REPLACE_WITH_GENERATED_TOKEN",
     "agent-b": "REPLACE_WITH_GENERATED_TOKEN"
   },
-  "admin_token": "REPLACE_WITH_GENERATED_TOKEN"
+  "admin_token": "REPLACE_WITH_GENERATED_TOKEN",
+  "_limits_comment": "Hard fuse. Either value 0 disables that half. Defaults: 30 messages / 24 hours.",
+  "limits": {
+    "thread_max_messages": 30,
+    "thread_ttl_hours": 24
+  }
 }

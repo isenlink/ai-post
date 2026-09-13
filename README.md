@@ -33,6 +33,14 @@ participate.
   answers stay together
 - **Agent registry** — each agent publishes a card (description, capabilities,
   location) via `POST /agents/register`; discover peers with `GET /agents`
+- **Hard fuse** — a thread is closed automatically once it passes a message
+  count or an age limit, so two LLM agents cannot ping-pong forever
+  (the relay refuses the write with `409` and leaves a `system` note in the
+  thread)
+- **Loop guard** — `loopcheck.py` scans recent traffic for self-repetition,
+  near-duplicate adjacent messages and acknowledgement ping-pong, and can be
+  wired to a scheduler as a condition trigger
+- **Read-only web UI** — `/ui` shows threads and flags suspect ones
 - **Full audit** — every message is stored; query by sender/recipient/time
 - **Archival** — `archive.sh` exports old messages to JSONL and prunes the DB
 - **Tiny** — one Python file, one SQLite file, one shell client
@@ -89,15 +97,104 @@ for full audit).
 
 | Endpoint | Description |
 |---|---|
-| `POST /send` | `{to, msg, reply_to?, context_id?}` → `{id, context_id}` |
+| `POST /send` | `{to, msg, reply_to?, context_id?}` → `{id, context_id}`; returns `409` when the thread is fused |
 | `GET /poll?since=<id>` | inbox messages newer than `<id>` (own only) |
 | `GET /thread?context_id=<id>` | full thread (participants or admin) |
 | `GET /agents` | agent registry |
 | `POST /agents/register` | `{description?, capabilities?, location?}` |
 | `GET /audit?frm=&to=&since_hours=&limit=` | message log (admin or own name in frm/to) |
+| `GET /ui` | read-only web UI (admin token) |
+| `GET /ui/threads?since_hours=` | thread list with suspicion flags (admin) |
 | `GET /health` | liveness |
 
 Env overrides: `AI_POST_PORT` (default 9100), `AI_POST_DB`, `AI_POST_CONFIG`.
+
+## Keeping agents from talking forever
+
+When every participant is an LLM, two failure modes show up quickly:
+
+1. **Acknowledgement ping-pong** — *"got it" → "ok" → "understood" → …*
+   Nobody stops, and neither agent notices it is doing nothing useful.
+2. **Self-repetition** — one agent keeps emitting the same sentence or fragment.
+
+The relay attacks both **without trusting the agents to police themselves**:
+
+### Hard fuse
+
+`POST /send` refuses to append to a thread that has exceeded
+`thread_max_messages` (default 30) or that is older than `thread_ttl_hours`
+(default 24). The caller gets `HTTP 409` with the reason, and a `system`
+message is written into the thread so every participant sees why it stopped.
+The `system` note itself is not counted toward the limit.
+
+```json
+// config.json — optional, these are the defaults
+"limits": { "thread_max_messages": 30, "thread_ttl_hours": 24 }
+```
+
+Set either to `0` to disable that half of the fuse.
+
+### Loop guard
+
+`loopcheck.py` is a dependency-free scanner over the same SQLite file. It flags:
+
+| Signal | Meaning |
+|---|---|
+| `SELF_REPEAT` | one message repeats its own sentences or a long fragment |
+| `NEAR_DUP` | same sender→recipient pair, adjacent messages ≥85% similar |
+| `PINGPONG` | two agents alternating ≥4 turns with no new information |
+| `ACK_ONLY` | message is a bare acknowledgement |
+
+```bash
+python3 loopcheck.py --since-hours 48        # human readable
+python3 loopcheck.py --since-hours 6 --json  # for schedulers / web UI
+```
+
+Being pure text heuristics, it costs no model calls. `GET /ui/threads`
+returns the same findings per thread, which is how the web UI turns a suspect
+thread red.
+
+### Convention we recommend to participants
+
+- Never send a bare acknowledgement; **staying silent is fine**.
+- Write `no reply needed` or `reply needed: <question>` at the end of a message.
+- Cap consecutive back-and-forth with one peer at two rounds.
+
+## Credits & references
+
+The fuse and the loop guard are our own code, but their **design** follows
+published work. No third-party code was copied; only the ideas were
+re-implemented (each project keeps its own license).
+
+- **DeepEval — `AgentLoopDetectionMetric`** ([confident-ai/deepeval](https://github.com/confident-ai/deepeval), Apache-2.0):
+  a deterministic, LLM-free loop metric with three signals — repeated calls with
+  identical arguments, adjacent-output similarity (the larger of bigram Jaccard
+  and `SequenceMatcher`, **default threshold 0.85**), and cycle detection over
+  the call graph. Our `NEAR_DUP` threshold and the “no LLM needed” stance come
+  from this metric.
+- **AutoGen** ([microsoft/autogen](https://github.com/microsoft/autogen), MIT):
+  termination as a first-class, composable condition (`MaxMessageTermination`,
+  `TokenUsageTermination`, `TimeoutTermination`, text mentions, …). That is the
+  model we follow by enforcing the fuse **in the relay** instead of in a prompt.
+- **CAMEL** ([camel-ai/camel](https://github.com/camel-ai/camel), Apache-2.0):
+  an explicit termination token `<CAMEL_TASK_DONE>` plus a hard
+  `chat_turn_limit`; the paper states outright that without them two agents keep
+  saying thanks/goodbye forever.
+- **ChatDev** ([OpenBMB/ChatDev](https://github.com/OpenBMB/ChatDev)),
+  **LangGraph** ([langchain-ai/langgraph](https://github.com/langchain-ai/langgraph)),
+  **OpenAI Agents SDK** ([openai/openai-agents-python](https://github.com/openai/openai-agents-python)),
+  **MetaGPT** ([FoundationAgents/MetaGPT](https://github.com/FoundationAgents/MetaGPT)):
+  per-phase `max_turn_step` / `recursion_limit` / `max_turns` / `n_round` — prior
+  art for bounded agent-to-agent conversation.
+- **mahilo** ([wjayesh/mahilo](https://github.com/wjayesh/mahilo)): anti-loop
+  policy as a pluggable layer on the message bus. Same reasoning as ours:
+  enforcement should not depend on the agents' self-awareness.
+- **MAST — *Why Do Multi-Agent LLM Systems Fail?*** ([arXiv:2503.13657](https://arxiv.org/abs/2503.13657)):
+  14 failure modes over 1600+ traces; *step repetition* is the single largest
+  (15.7%), followed by *unaware of termination conditions* (12.4%). This is the
+  empirical case for a relay-side fuse.
+- **A2A** (Google / Linux Foundation): the thread envelope (`context_id`) and
+  Agent-Card-style registry.
 
 ## Security notes
 
@@ -124,8 +221,8 @@ Env overrides: `AI_POST_PORT` (default 9100), `AI_POST_DB`, `AI_POST_CONFIG`.
 
 - per-message HMAC signing (cf. AI-COMMS)
 - optional webhook push instead of polling
-- read-only web UI for the audit log
 - A2A-compatible message envelope (drop-in migration path)
+- optional “termination token” handled by the relay itself
 
 ## License
 
