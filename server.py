@@ -188,8 +188,9 @@ async def poll(since: int = 0, x_token: str | None = Header(default=None, alias=
 @app.get("/thread")
 async def thread(context_id: str, x_token: str | None = Header(default=None, alias="X-Auth-Token")):
     """拉取一个线程的完整对话（参与者或 admin 可查）"""
-    me = auth(x_token)
     cfg = load_config()
+    is_admin = x_token == cfg.get("admin_token")
+    me = None if is_admin else auth(x_token)
     with db() as c:
         rows = c.execute(
             "SELECT id, ts, sender, recipient, msg, reply_to, context_id FROM messages "
@@ -199,7 +200,7 @@ async def thread(context_id: str, x_token: str | None = Header(default=None, ali
     if not rows:
         raise HTTPException(404, "thread not found")
     participants = {r["sender"] for r in rows} | {r["recipient"] for r in rows}
-    if me not in participants and x_token != cfg.get("admin_token"):
+    if not is_admin and me not in participants:
         raise HTTPException(403, "not a participant")
     return {"ok": True, "context_id": context_id, "messages": [dict(r) for r in rows]}
 
