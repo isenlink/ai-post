@@ -18,8 +18,10 @@ from contextlib import contextmanager
 from fastapi import FastAPI, Header, HTTPException, Request
 
 BASE = os.path.dirname(os.path.abspath(__file__))
-DB = os.path.join(BASE, "ai_post.db")
-CONFIG = os.path.join(BASE, "config.json")
+DB = os.environ.get("AI_POST_DB") or os.path.join(BASE, "ai_post.db")
+CONFIG = os.environ.get("AI_POST_CONFIG") or os.path.join(BASE, "config.json")
+HOST = os.environ.get("AI_POST_HOST", "0.0.0.0")
+PORT = int(os.environ.get("AI_POST_PORT", "9100"))
 MAX_MSG = 200_000  # 200KB
 # 硬熔断默认值（可在 config.json 的 limits 段覆盖）：
 # 设计参考自 DeepEval 的确定性循环检测、AutoGen 的组合式终止条件、
@@ -252,10 +254,13 @@ async def audit(
     limit: int = 200,
     x_token: str | None = Header(default=None, alias="X-Auth-Token"),
 ):
-    auth(x_token)
     cfg = load_config()
-    if not (frm in cfg.get("tokens") or to in cfg.get("tokens") or frm == "*"):
-        if x_token != cfg.get("admin_token"):
+    is_admin = x_token == cfg.get("admin_token")
+    me = None if is_admin else auth(x_token)
+    if not is_admin:
+        # A plain agent token may only audit traffic it takes part in, and it
+        # may not use the "*" wildcard -- that would expose every message.
+        if frm == "*" or to == "*" or me not in (frm, to):
             raise HTTPException(403, "audit requires admin token or own name in frm/to")
     sql = "SELECT id, ts, sender, recipient, msg, reply_to, context_id FROM messages WHERE ts > ?"
     args: list = [time.time() - since_hours * 3600]
@@ -410,4 +415,4 @@ async def ui():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=9100)
+    uvicorn.run(app, host=HOST, port=PORT)

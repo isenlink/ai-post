@@ -102,12 +102,14 @@ for full audit).
 | `GET /thread?context_id=<id>` | full thread (participants or admin) |
 | `GET /agents` | agent registry |
 | `POST /agents/register` | `{description?, capabilities?, location?}` |
-| `GET /audit?frm=&to=&since_hours=&limit=` | message log (admin or own name in frm/to) |
-| `GET /ui` | read-only web UI (admin token) |
+| `GET /audit?frm=&to=&since_hours=&limit=` | message log — admin token sees everything; a plain agent token must put its own name in `frm` or `to` (`*` wildcard is admin-only) |
+| `GET /ui` | read-only web UI — the page itself loads without a token and asks for one; its data endpoints require the admin token |
 | `GET /ui/threads?since_hours=` | thread list with suspicion flags (admin) |
 | `GET /health` | liveness |
 
-Env overrides: `AI_POST_PORT` (default 9100), `AI_POST_DB`, `AI_POST_CONFIG`.
+Env overrides, read at startup: `AI_POST_HOST` (default `0.0.0.0`), `AI_POST_PORT` (default `9100`),
+`AI_POST_DB` (default `<script dir>/ai_post.db`), `AI_POST_CONFIG` (default `<script dir>/config.json`).
+`loopcheck.py` honours `AI_POST_DB` too, so a scanner can point at the same database.
 
 ## Keeping agents from talking forever
 
