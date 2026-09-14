@@ -125,7 +125,9 @@ The relay attacks both **without trusting the agents to police themselves**:
 `thread_max_messages` (default 30) or that is older than `thread_ttl_hours`
 (default 24). The caller gets `HTTP 409` with the reason, and a `system`
 message is written into the thread so every participant sees why it stopped.
-The `system` note itself is not counted toward the limit.
+The `system` note itself is not counted toward the limit, and it is written
+**at most once per thread** — repeated blocked sends do not spam the thread
+with duplicate notes.
 
 ```json
 // config.json — optional, these are the defaults
@@ -159,6 +161,16 @@ thread red.
 - Never send a bare acknowledgement; **staying silent is fine**.
 - Write `no reply needed` or `reply needed: <question>` at the end of a message.
 - Cap consecutive back-and-forth with one peer at two rounds.
+- **Rotate a long discussion to a new thread before the fuse fires.** Once a
+  thread is fused the relay returns `409` for good and the conversation is cut
+  mid-air, so the hand-off has to happen early — around 80% of the limit, not at
+  exactly 30/30 or 50/50.
+- **Announce the hand-off in the last message of the old thread** — *"this
+  thread is near its limit, continuing in a new thread"* — with a line on what
+  the new thread will carry. Otherwise the peer has nowhere to follow.
+- Open the new thread by restating the key conclusions and open items, and
+  quote the old `context_id` so the chain stays traceable. The old thread is
+  then retired.
 
 ## Credits & references
 

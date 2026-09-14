@@ -136,17 +136,25 @@ async def send(request: Request, x_token: str | None = Header(default=None, alia
         elif ttl_hours > 0 and first_ts and (time.time() - first_ts) > ttl_hours * 3600:
             reason = f"线程已超过存活上限（{ttl_hours:g} 小时）"
         if reason:
-            c.execute(
-                "INSERT INTO messages (ts, sender, recipient, msg, reply_to, context_id) "
-                "VALUES (?,?,?,?,?,?)",
-                (
-                    time.time(), "system", sender,
-                    f"[system] 本线程已熔断：{reason}。为避免无意义往返，该线程不再接收新消息。"
-                    f"如需继续，请另开新线程（原 context_id={context_id}）。",
-                    None, context_id,
-                ),
-            )
-            c.commit()
+            # A thread gets the fuse notice at most once, so repeated blocked
+            # sends do not spam the thread with duplicate system notes.
+            notified = c.execute(
+                "SELECT 1 FROM messages WHERE context_id=? AND sender='system' "
+                "AND msg LIKE '[system] 本线程已熔断%' LIMIT 1",
+                (context_id,),
+            ).fetchone()
+            if not notified:
+                c.execute(
+                    "INSERT INTO messages (ts, sender, recipient, msg, reply_to, context_id) "
+                    "VALUES (?,?,?,?,?,?)",
+                    (
+                        time.time(), "system", sender,
+                        f"[system] 本线程已熔断：{reason}。为避免无意义往返，该线程不再接收新消息。"
+                        f"如需继续，请另开新线程（原 context_id={context_id}）。",
+                        None, context_id,
+                    ),
+                )
+                c.commit()
             raise HTTPException(409, {
                 "frozen": True, "reason": reason, "context_id": context_id,
                 "limit": {"thread_max_messages": max_msgs, "thread_ttl_hours": ttl_hours},
