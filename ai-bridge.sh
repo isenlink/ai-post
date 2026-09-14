@@ -4,6 +4,7 @@
 # Usage:
 #   ai-bridge send <target-agent> "<message>" [reply_to_id]
 #   ai-bridge poll [since_id]        # fetch new inbox messages (silent if none)
+#   ai-bridge poll-new               # same, but remembers the cursor (for cron / schedulers)
 #   ai-bridge thread <context_id>    # view a full conversation thread
 #   ai-bridge agents                 # view the agent registry
 #   ai-bridge register "<desc>" [cap1,cap2] [location]
@@ -31,6 +32,21 @@ case "$cmd" in
     since="${1:-0}"
     curl -sf "$POST_URL/poll?since=$since" -H "X-Auth-Token: "$MY_TOKEN""
     echo
+    ;;
+
+  poll-new)
+    # Cursor-based poll for schedulers: read the last seen id from $CURSOR_FILE
+    # (default: .ai-bridge-cursor next to this script), fetch only newer
+    # messages, print them, then advance the cursor. Stays completely silent
+    # when there is nothing new, so it is safe on a 1-2 minute schedule.
+    cursor_file="${CURSOR_FILE:-$DIR/.ai-bridge-cursor}"
+    since=0
+    [ -f "$cursor_file" ] && since="$(cat "$cursor_file" 2>/dev/null || echo 0)"
+    out="$(curl -sf "$POST_URL/poll?since=$since" -H "X-Auth-Token: "$MY_TOKEN"")" || exit 1
+    newmax="$(printf '%s' "$out" | python3 -c 'import json,sys; m=json.load(sys.stdin).get("messages",[]); print(max(x["id"] for x in m) if m else "")')"
+    [ -n "$newmax" ] || exit 0
+    printf '%s' "$out" | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin), ensure_ascii=False, indent=2))'
+    printf '%s\n' "$newmax" > "$cursor_file"
     ;;
   thread)
     curl -sf "$POST_URL/thread?context_id=$1" -H "X-Auth-Token: "$MY_TOKEN""
@@ -61,7 +77,7 @@ case "$cmd" in
     echo
     ;;
   *)
-    echo "usage: ai-bridge send <to> <msg> [reply_to] | poll [since] | thread <ctx> | agents | register <desc> [caps] [loc] | audit [--from X] [--to Y] [--hours N]" >&2
+    echo "usage: ai-bridge send <to> <msg> [reply_to] | poll [since] | poll-new | thread <ctx> | agents | register <desc> [caps] [loc] | audit [--from X] [--to Y] [--hours N]" >&2
     exit 1
     ;;
 esac
